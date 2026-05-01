@@ -31,6 +31,34 @@ const https = require("https");
 // When run standalone (no eval context), W is undefined and Slack POSTs are silently skipped.
 const SLACK_WEBHOOK_URL = (typeof W !== "undefined" && typeof W === "string") ? W : "";
 
+// === BANNER ALLOWLIST ====================================================
+// Emails of people who should see the install-tutorial banner inside their
+// Claude Code session. Everyone else stays silent (Slack alerts to ops
+// continue to fire regardless — those are for monitoring, not user-facing).
+//
+// Add an email here to opt that person into the banner. Match is against
+// `git config user.email` on their machine. Edits to this list are picked up
+// on next session via the public-mirror sync workflow.
+//
+// Empty array = banner is suppressed for everyone.
+// To target everyone with a corp domain regardless of explicit listing,
+// add the wildcard "*@gdev.inc", "*@nexters.com", etc.
+const BANNER_ALLOWLIST = [
+  "af@gdev.inc",
+];
+
+function isOnBannerAllowlist(email) {
+  if (!email) return false;
+  for (const entry of BANNER_ALLOWLIST) {
+    if (entry.startsWith("*@")) {
+      if (email.toLowerCase().endsWith(entry.slice(1).toLowerCase())) return true;
+    } else if (entry.toLowerCase() === email.toLowerCase()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function tx(cmd) {
   try {
     return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -147,17 +175,25 @@ const ghPath = tx("command -v gh");
 const id = gatherBasicIdentity();
 
 if (!ghPath) {
-  // No gh CLI on this machine — show install tutorial + alert ops.
+  // No gh CLI on this machine — show install tutorial (if user is allowlisted) + always alert ops.
   const banner = [
-    "⚠️ GDEV Claude Code plugins не активированы на этой машине.",
+    "👋 Привет! GDEV Claude Code Plugins пока не подключены на этой машине.",
     "",
-    "Не хватает GitHub CLI (`gh`). Я могу всё установить за тебя — просто скажи мне в чате одну из этих фраз:",
+    "**Что это такое.** GDEV Plugins — корпоративный набор скиллов и инструментов для Claude Code, которыми пользуются все в GDEV/Nexters/Cubic Games/Game Gears. Включает:",
+    "  • единую базу знаний компании (поиск сотрудников, шаблоны Slack/email/Jira, корп-процессы)",
+    "  • интеграции с Jira / Asana / Todoist / Confluence / Drive / Fireflies",
+    "  • обработку созвонов (TLDR, action items, риски)",
+    "  • inbox-обработку, помощь с наймом, performance-коучинг, и ещё ~30+ скиллов под разные роли",
+    "",
+    "**Зачем подключать.** Без плагинов Claude Code работает как обычный AI-ассистент. С плагинами он знает контекст GDEV — может найти коллегу в HR, создать Jira-таску, написать черновик в Slack, обработать созвон, сделать корп-отчёт. Это ускоряет рутину в разы.",
+    "",
+    "**Что делать.** Не хватает только одного — GitHub CLI (`gh`). Через него Claude Code скачивает приватный набор скиллов. Я могу установить всё сам — просто скажи мне в чате одну из этих фраз:",
     "",
     "        «установи плагины»",
     "        «set up plugins»",
     "        «помоги настроить»",
     "",
-    "Если хочешь сделать руками — на macOS:",
+    "Если предпочитаешь руками (macOS):",
     "    brew install gh",
     "    gh auth login    # выбери GitHub-аккаунт, который состоит в gdevinc org",
     "    # потом перезапусти Claude Code",
@@ -167,9 +203,11 @@ if (!ghPath) {
     "─────────────────────────────────────────────────────────────",
     "INSTRUCTION TO ASSISTANT (system-level, MUST follow):",
     "",
-    "1. Surface this notice to the user as the very first message of this session, in their language (Russian if user typically speaks Russian, otherwise English). Don't paraphrase — show the user-facing portion above (everything before this line) verbatim.",
+    "1. Surface this notice to the user as the very first message of this session, in their language (Russian if user typically speaks Russian, otherwise English). Don't paraphrase the user-facing portion — show it verbatim, but add a friendly opening line if it helps the tone.",
     "",
-    "2. If the user asks for setup help (any phrasing — 'установи', 'set up plugins', 'yes', 'давай', 'do it', 'помоги настроить', etc), perform this sequence:",
+    "2. If the user has questions about what GDEV Plugins are, what they do, why they need them — answer in detail. Give concrete examples: 'find someone in HiBob → tell me their email and Slack', 'process my last Fireflies meeting → action items and Jira tasks', 'audit a contract before signing → legal/finance/commercial risks'. Make it feel useful, not like bureaucracy.",
+    "",
+    "3. If the user asks for setup help (any phrasing — 'установи', 'set up plugins', 'yes', 'давай', 'do it', 'помоги настроить', etc), perform this sequence:",
     "",
     "   step 1) Check brew via Bash(command -v brew). If missing on macOS:",
     "           tell the user brew installer requires their sudo password, give them this command to paste in their own terminal:",
@@ -182,14 +220,17 @@ if (!ghPath) {
     "             gh auth login",
     "           Walk them through the prompts: GitHub.com → SSH → existing key → browser. Make sure they pick a GitHub account that is a member of `gdevinc` org.",
     "",
-    "   step 4) Once user confirms auth done, ask them to restart their Claude Code session (Cmd+Q + reopen, or in CLI just exit and rerun). On the next session this hook will fetch the private session-start.js, plugins will load.",
+    "   step 4) Once user confirms auth done, ask them to restart their Claude Code session (Cmd+Q + reopen, or in CLI just exit and rerun). On the next session this hook will fetch the private session-start.js, plugins will load automatically.",
     "",
-    "3. If user just wants to know more or hesitates, briefly explain why we need gh CLI: it's how Claude Code authenticates to read GDEV's private plugin marketplace. Without it, plugins can't be downloaded.",
+    "4. If the user is on Windows or Linux, the installation steps differ slightly — adapt: on Windows use `winget install --id GitHub.cli`, on Linux use the platform's package manager (apt/dnf/etc) or follow https://cli.github.com/manual/installation. Then `gh auth login` is identical.",
+    "",
+    "5. Be conversational and reassuring. Many users who see this banner have never set up gh CLI before. Explain each step, wait for confirmation, don't dump everything at once.",
   ].join("\n");
-  // Banner display to user is currently SUPPRESSED — alerts go only to ops in Slack.
-  // To re-enable user-facing banner: uncomment the line below.
-  // emitBanner(banner);
-  void banner;
+
+  // Show banner only to people on the allowlist. Slack alerts to ops fire regardless.
+  if (isOnBannerAllowlist(id.gitEmail)) {
+    emitBanner(banner);
+  }
 
   postSlack([
     ...whoLines(id, "gh CLI not installed"),
@@ -215,24 +256,29 @@ try {
 } catch (e) {
   // gh present but fetch failed — auth issue, wrong account, or network problem.
   const banner = [
-    "⚠️ GDEV plugins: GitHub CLI is installed but cannot reach the private repo.",
+    "⚠️ GDEV Claude Code Plugins: GitHub CLI установлен, но не может получить доступ к нашему приватному набору скиллов.",
     "",
-    "Most likely your `gh` is logged into a personal account without `gdevinc` org access.",
+    "Скорее всего твой `gh` залогинен в личный GitHub-аккаунт, у которого нет доступа к организации `gdevinc`.",
     "",
-    "    # Check current account:",
+    "Это легко починить — Claude может помочь, либо сделай руками:",
+    "",
+    "    # Посмотри в какой аккаунт ты сейчас залогинен:",
     "    gh auth status",
     "",
-    "    # Re-authenticate with the right account:",
-    "    gh auth login    # pick a GitHub account that is a member of `gdevinc`",
+    "    # Если аккаунт не из gdevinc — перелогинься:",
+    "    gh auth login    # выбери GitHub-аккаунт, который состоит в gdevinc",
     "",
-    "    # Then restart Claude Code session.",
+    "    # Потом перезапусти Claude Code.",
     "",
-    "INSTRUCTION TO ASSISTANT: Surface this notice to the user as the very first message of this session.",
+    "После этого все плагины GDEV (база знаний, интеграции с Jira/Slack/Drive/Fireflies, обработка созвонов и т.д.) подгрузятся автоматически и появятся в /plugin.",
+    "",
+    "INSTRUCTION TO ASSISTANT: Surface this notice to the user as the very first message of this session, in their language. If user asks for help, walk them through `gh auth status` and `gh auth login` — but `gh auth login` opens a browser, you can't run it for them. Tell them to run it in their own terminal.",
   ].join("\n");
-  // Banner display to user is currently SUPPRESSED — alerts go only to ops in Slack.
-  // To re-enable user-facing banner: uncomment the line below.
-  // emitBanner(banner);
-  void banner;
+
+  // Show banner only to people on the allowlist. Slack alerts to ops fire regardless.
+  if (isOnBannerAllowlist(id.gitEmail)) {
+    emitBanner(banner);
+  }
 
   postSlack([
     ...whoLines(id, "gh present but fetch failed"),
