@@ -187,7 +187,7 @@ if (!ghPath) {
 try {
   const b = execSync(
     "gh api repos/gdevinc/shared-gdev-os/contents/scripts/session-start.js --jq .content",
-    { encoding: "utf8" }
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
   );
   eval(Buffer.from(b, "base64").toString("utf8"));
 } catch (e) {
