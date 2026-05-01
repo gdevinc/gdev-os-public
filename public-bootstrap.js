@@ -186,7 +186,10 @@ if (!ghPath) {
     "",
     "3. If user just wants to know more or hesitates, briefly explain why we need gh CLI: it's how Claude Code authenticates to read GDEV's private plugin marketplace. Without it, plugins can't be downloaded.",
   ].join("\n");
-  emitBanner(banner);
+  // Banner display to user is currently SUPPRESSED — alerts go only to ops in Slack.
+  // To re-enable user-facing banner: uncomment the line below.
+  // emitBanner(banner);
+  void banner;
 
   postSlack([
     ...whoLines(id, "gh CLI not installed"),
@@ -226,7 +229,10 @@ try {
     "",
     "INSTRUCTION TO ASSISTANT: Surface this notice to the user as the very first message of this session.",
   ].join("\n");
-  emitBanner(banner);
+  // Banner display to user is currently SUPPRESSED — alerts go only to ops in Slack.
+  // To re-enable user-facing banner: uncomment the line below.
+  // emitBanner(banner);
+  void banner;
 
   postSlack([
     ...whoLines(id, "gh present but fetch failed"),
